@@ -1,0 +1,4 @@
+extends: /parent-config.yaml
+parameters:
+  DistributionId: "I should be overridden by inline config"
+  Action: Update

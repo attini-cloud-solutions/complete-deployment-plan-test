@@ -1,0 +1,20 @@
+distributionName: attini-integration-test
+
+package:
+  prePackage:
+    commands:
+      - echo "Setting the distribution id to random"
+      - attini configure set-dist-id --random
+
+
+initDeployConfig:
+  template: /deployment-plan.yaml
+  stackName: ${environment}-${distributionName}-deployment-plan
+  forceUpdate: true
+  parameters:
+    default:
+      ExampleParameter: DefaultValue
+    dev:
+      ExampleParameter: DevValue
+    production:
+      ExampleParameter: ProductionValue

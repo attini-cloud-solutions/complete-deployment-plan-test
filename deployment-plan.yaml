@@ -1,0 +1,168 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Transform:
+  - AttiniDeploymentPlan
+  - AWS::Serverless-2016-10-31
+
+Parameters:
+  AttiniEnvironmentName:
+    Type: String
+
+  ExampleParameter:
+    Type: String
+
+
+Resources:
+
+  FargateRunner:
+    Type: Attini::Deploy::Runner
+    Properties:
+      RunnerConfiguration:
+        IdleTimeToLive: 600
+  Ec2Runner:
+    Type: Attini::Deploy::Runner
+    Properties:
+      Ec2Configuration:
+        InstanceType: m5.large
+      RunnerConfiguration:
+        IdleTimeToLive: 600
+
+
+  DeploymentPlan:
+    Type: Attini::Deploy::DeploymentPlan
+    Properties:
+      DefaultRunner: Ec2Runner
+      DeploymentPlan:
+        - Name: Start Runners
+          Type: Parallel
+          Branches:
+            #Start several fargate runner steps at the same time to verify that only one ECS task will start to handle alla tasks
+            -
+              - Name: Start Fargate Runner
+                Type: AttiniRunnerJob
+                Properties:
+                  Runner: FargateRunner
+                  Commands:
+                    - echo "started Fargate Runner"
+            -
+              - Name: Start Fargate Runner1
+                Type: AttiniRunnerJob
+                Properties:
+                  Runner: FargateRunner
+                  Commands:
+                    - echo "started Fargate Runner"
+            -
+              - Name: Start Fargate Runner2
+                Type: AttiniRunnerJob
+                Properties:
+                  Runner: FargateRunner
+                  Commands:
+                    - echo "started Fargate Runner"
+            -
+              - Name: Start Fargate Runner3
+                Type: AttiniRunnerJob
+                Properties:
+                  Runner: FargateRunner
+                  Commands:
+                    - echo "started Fargate Runner"
+            #Start several ec2 runner steps at the same time to verify that only one EC2 and ECS task will start to handle alla tasks
+            -
+              - Name: Start Ec2 Runner
+                Type: AttiniRunnerJob
+                Properties:
+                  Runner: Ec2Runner
+                  Commands:
+                    - echo "started EC2 Runner"
+            -
+              - Name: Start Ec2 Runner1
+                Type: AttiniRunnerJob
+                Properties:
+                  Runner: Ec2Runner
+                  Commands:
+                    - echo "started EC2 Runner"
+            -
+              - Name: Start Ec2 Runner2
+                Type: AttiniRunnerJob
+                Properties:
+                  Runner: Ec2Runner
+                  Commands:
+                    - echo "started EC2 Runner"
+            -
+              - Name: Start Ec2 Runner3
+                Type: AttiniRunnerJob
+                Properties:
+                  Runner: Ec2Runner
+                  Commands:
+                    - echo "started EC2 Runner"
+
+        - Name: DeployDatabase
+          Type: AttiniCfn
+          Properties:
+            StackName: !Sub ${AttiniEnvironmentName}-lambda-database
+            Template: dynamo-db-template.yaml
+        - Name: Perform tests
+          Type: Parallel
+          Branches:
+            -
+              - Name: Deploy Lambda Stack
+                Type: AttiniCfn
+                Properties:
+                  StackName: ALambdaStack
+                  Template: lambda-cfn-template.yaml
+                  ConfigFile: /parent-config.yaml
+                  Parameters:
+                    StepName.$: $$.State.Name
+                    DistributionId.$: $.deploymentOriginData.distributionId
+              - Name: Check create stack output
+                Type: AttiniRunnerJob
+                Properties:
+                  Runner: FargateRunner
+                  Commands:
+                    - if [[ $(jq -r '.output."Deploy Lambda Stack".DistributionId' ${ATTINI_INPUT}) != $ATTINI_DISTRIBUTION_ID ]]; then exit 1; fi
+                    - if [[ $(jq -r '.output."Deploy Lambda Stack".Action' ${ATTINI_INPUT}) != Create ]]; then exit 1; fi
+              - Name: Update the Lambda Stack
+                Type: AttiniCfn
+                Properties:
+                  StackName: ALambdaStack
+                  Template: lambda-cfn-template.yaml
+                  ConfigFile: /lambda-config.yaml
+                  Parameters:
+                    StepName.$: $$.State.Name
+                    DistributionId.$: $.deploymentOriginData.distributionId
+              - Name: Check update stack output
+                Type: AttiniRunnerJob
+                Properties:
+                  Runner: Ec2Runner
+                  Commands:
+                    - if [[ $(jq -r '.output."Update the Lambda Stack".DistributionId' ${ATTINI_INPUT}) != $ATTINI_DISTRIBUTION_ID ]]; then exit 1; fi
+                    - if [[ $(jq -r '.output."Update the Lambda Stack".Action' ${ATTINI_INPUT}) != Update ]]; then exit 1; fi
+              - Name: Invoke_Lambda
+                Type: AttiniLambdaInvoke
+                Parameters:
+                  FunctionName.$: $['output']['Deploy Lambda Stack']['FunctionName']
+                  Payload:
+                    DistributionName.$: $.deploymentOriginData.distributionName
+              - Name: Delete the Lambda Stack
+                Type: AttiniCfn
+                Properties:
+                  StackName: ALambdaStack
+                  Template: lambda-cfn-template.yaml
+                  Action: Delete
+            -
+              - Name: DeploySamProject
+                Type: AttiniSam
+                Properties:
+                  Project:
+                    Path: python-sam-app
+                  StackName: !Sub ${AttiniEnvironmentName}-sam-lambda
+                  Parameters:
+                    TableName.$: $.output.DeployDatabase.TableName
+            -
+              - Name: Deploy cdk stack
+                Type: AttiniCdk
+                Properties:
+                  Runner: Ec2Runner
+                  Path: ./typescript-cdk-app
+                  Build: npm install
+
+
